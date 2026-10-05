@@ -694,7 +694,7 @@
       "shipped_constants": {
         "a": -2.4133,
         "b": 0.5291,
-        "source": "config/planner.yaml (fitted on the frozen T6 back-test)"
+        "source": "config/app.yaml:planner (fitted on the frozen T6 back-test)"
       },
       "refit_on_fit_half": {
         "a": -1.4197551804581605,

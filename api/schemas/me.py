@@ -180,10 +180,14 @@ class TransactionsData(BaseModel):
 
 class GoalCreateRequest(BaseModel):
     goal_type: str
-    target_paisa: int
-    months: int
+    # Sane bounds, mirroring GoalPlanRequest: positive target with a ceiling
+    # (~10^13 paisa = ৳100bn — far beyond any MFS wallet) so a garbled client
+    # cannot persist absurd money. The web twin route enforces the same
+    # positive-target check.
+    target_paisa: int = Field(gt=0, le=10_000_000_000_000)
+    months: int = Field(gt=0, le=60)
     plan_option_key: str
-    monthly_contribution_paisa: int
+    monthly_contribution_paisa: int = Field(ge=0, le=10_000_000_000_000)
 
 
 class GoalRecord(BaseModel):

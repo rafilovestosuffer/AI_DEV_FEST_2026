@@ -25,6 +25,7 @@ from core.categorizer import categorize
 from core.formatting import format_taka
 from core.money import apply_rate
 from core.schemas import TxnType
+from core.timeutils import dhaka_date
 
 # Categories where a spending trim is a realistic user choice (never rent,
 # bills, mobile or family support — those are obligations).
@@ -71,7 +72,11 @@ def get_actions(conn: sqlite3.Connection, cfg, user_id: str) -> ActionsData:
     cat_month: dict[str, int] = defaultdict(int)
     cashout_amts: list[int] = []
     for t in txns:
-        if t.ts.date() < cutoff:
+        # ADR-10: calendar logic runs in Asia/Dhaka. The stored timestamps are
+        # UTC; their Dhaka-local dates decide window membership (a 21:00Z
+        # spend is already the next Dhaka day), matching every other window
+        # in the codebase (core/metrics, core/cashout, core/recurring).
+        if dhaka_date(t.ts) < cutoff:
             continue
         if t.type == TxnType.CASH_OUT:
             cashout_amts.append(int(t.amount_paisa))

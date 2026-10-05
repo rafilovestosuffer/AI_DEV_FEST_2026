@@ -4,7 +4,7 @@ import {
   buildEvidence, ok, unauthorized, notFound,
 } from "@/lib/server/sathiApi";
 import { personaUserForecast } from "@/lib/server/userForecast";
-import { getUserInputs, effectiveCashOnHand } from "@/lib/server/userInputs";
+import { getUserInputs, effectiveCashOnHand, behavioralCash } from "@/lib/server/userInputs";
 import { ESSENTIALS_PER_DAY_TAKA, THRESHOLDS } from "@/lib/engine/sathiConfig";
 import { computeMetrics, monthlyTotals, weeklyOutflows } from "@/lib/engine/metricsEngine";
 import { calculateSafeToSpend, upcomingCommitments, modelStatus } from "@/lib/engine/safeToSpend";
@@ -54,7 +54,12 @@ export async function GET(req: NextRequest) {
     const inputs = await getUserInputs(user.id);
     const eff = effectiveCashOnHand(txns, anchor, inputs.cashOnHandTaka, inputs.cashOnHandUpdatedAt);
     const otherLiquid = inputs.otherLiquidTaka ?? 0;
-    const dailyCashBurn = Math.max(0, eff.cashTaka) / 21;
+    // Observed trailing cash-out totals (21-day window, same estimator the
+    // effective-cash decay uses) — NOT the effective cash figure, which is a
+    // different quantity and used to duplicate these fields before the fix.
+    const trailingCashout = behavioralCash(txns, anchor);
+    const dailyCashBurn = trailingCashout.burnTakaPerDay;
+    const trailingCashoutTotal = trailingCashout.trailingTotalTaka;
 
     // Core safe-to-spend (taka engine -> paisa output) - the RULE baseline,
     // computed over TOTAL liquidity: wallet + effective cash + other liquid.
@@ -227,8 +232,9 @@ export async function GET(req: NextRequest) {
       cash_on_hand: {
         estimated_cash_paisa: eff.cashTaka * 100,
         estimated_cash_display: formatTaka(eff.cashTaka, "bn"),
-        trailing_cashout_total_paisa: eff.cashTaka * 100,
-        trailing_cashout_total_display: formatTaka(eff.cashTaka, "bn"),
+        // observed trailing 21-day cash-out total + the daily burn it implies
+        trailing_cashout_total_paisa: Math.round(trailingCashoutTotal) * 100,
+        trailing_cashout_total_display: formatTaka(Math.round(trailingCashoutTotal), "bn"),
         daily_cash_burn_paisa: Math.round(dailyCashBurn) * 100,
         daily_cash_burn_display: formatTaka(Math.round(dailyCashBurn), "bn"),
         days_of_cash_remaining: dailyCashBurn > 0 ? Math.round(balance / dailyCashBurn) : null,

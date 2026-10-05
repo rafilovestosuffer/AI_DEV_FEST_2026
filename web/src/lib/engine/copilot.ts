@@ -7,11 +7,11 @@
  *   → optional LLM re-write of the summary (server-side z-ai sdk)
  *
  * The LLM never sees freedom to invent numbers: it receives the computed
- * evidence and must select from it. A numeric validator checks every ৳
- * figure in the answer against the engine outputs; on ANY failure the
- * deterministic template is shown (fail-closed). If the AI gateway is
- * unavailable, the deterministic answer is returned with llmEnhanced=false
- * — the product still works.
+ * evidence and must select from it. A numeric validator checks every number
+ * in the answer — ৳ amounts, percentages and bare counts — against the
+ * engine outputs; on ANY failure the deterministic template is shown
+ * (fail-closed). If the AI gateway is unavailable, the deterministic answer
+ * is returned with llmEnhanced=false — the product still works.
  */
 import type {
   CopilotAnswer, EvidenceItem, Goal, Txn, Confidence,
@@ -19,6 +19,7 @@ import type {
 } from "./domain";
 import { categoryLabel, MODEL_VERSION } from "./domain";
 import { computeSpendingIntelligence, estimateMonthlyCapacity, estimateCashOnHand } from "./analytics";
+import { toEnglishDigits } from "./formatting";
 import { forecastCashflow } from "./forecast";
 import { analyzeGoal, simulateGoal } from "./goals";
 import { retrieveKnowledge, type KnowledgeChunk } from "./knowledge";
@@ -349,23 +350,61 @@ function buildDeterministicAnswer(
   };
 }
 
-/** Every ৳-amount in the LLM text must already exist in our computed evidence. */
+/** Every number in the LLM text — ৳ amounts, percentages ("12.5%",
+ * "শতকরা") and bare counts — must already exist in the computed evidence.
+ * Comparisons are decimal-aware: a percentage matches the evidence percent,
+ * its raw-fraction form and whole-percent roundings (12.5% ↔ 0.125 ↔ 13%),
+ * while ৳ amounts must match to the paisa. One ungrounded number rejects
+ * the whole draft (fail-closed to the deterministic template). */
 export function numbersAreGrounded(llmText: string, base: CopilotAnswer): boolean {
-  const groundTruth = new Set<string>();
+  // Ground truth: every numeric token in the computed evidence, kept as a
+  // number (commas stripped) plus whether it was percentage-formatted.
+  const truth: { n: number; pct: boolean }[] = [];
   const collect = (items: EvidenceItem[]) => {
     for (const it of items) {
-      for (const m of it.value.match(/[\d,]+/g) ?? []) {
-        groundTruth.add(m.replace(/,/g, ""));
+      for (const m of toEnglishDigits(it.value).matchAll(/([\d,]+(?:\.\d+)?)\s*(%|শতকরা)?/g)) {
+        const n = Number(m[1]!.replace(/,/g, ""));
+        if (Number.isFinite(n)) truth.push({ n, pct: m[2] !== undefined });
       }
     }
   };
   collect(base.numbers);
   collect(base.evidence);
-  // bare small integers (counts, days) are allowed — only ৳-figures are validated
-  const cited = llmText.match(/৳\s*([\d,]+(?:\.\d+)?)/g) ?? [];
-  for (const c of cited) {
-    const n = c.replace(/[৳\s,]/g, "").replace(/\.\d+$/, "");
-    if (!groundTruth.has(n)) return false;
+
+  // Draft tokens, most specific first: ৳ amounts, then %- / শতকরা- /
+  // percent-formatted numbers (suffixed or prefixed), then every remaining
+  // bare count. Bangla digits are normalized before matching.
+  const num = "([\\d,]+(?:\\.\\d+)?)";
+  const TOKEN_RE = new RegExp(
+    [
+      `৳\\s*${num}`,                                   // ৳1,250.50
+      `${num}\\s*(?:%|শতকরা|percent(?:age)?\\b)`,     // 12.5% / 35 শতকরা
+      `(?:শতকরা|percent(?:age)?)\\s*${num}`,           // শতকরা ৩৫
+      num,                                             // bare count
+    ].join("|"),
+    "g",
+  );
+  const AMOUNT_TOL = 0.005; // ৳ figures must match the evidence to the paisa
+  const PERCENT_TOL = 0.505; // whole-percent rounding: 12.5% ↔ 13%
+  const near = (a: number, b: number, tol: number) => Math.abs(a - b) <= tol + 1e-9;
+  const amountGrounded = (n: number) => truth.some((g) => near(n, g.n, AMOUNT_TOL));
+  const percentGrounded = (n: number) => truth.some((g) =>
+    near(n, g.n, PERCENT_TOL) || // same percent, rounded
+    near(n, g.n * 100, PERCENT_TOL)); // evidence stored the raw fraction (0.125)
+  const countGrounded = (n: number) => truth.some((g) =>
+    near(n, g.n, AMOUNT_TOL) ||
+    (g.pct && near(n, g.n / 100, AMOUNT_TOL))); // draft cites the fraction (0.42 ↔ 42%)
+
+  for (const m of toEnglishDigits(llmText).matchAll(TOKEN_RE)) {
+    const n = Number((m[1] ?? m[2] ?? m[3] ?? m[4])!.replace(/,/g, ""));
+    if (!Number.isFinite(n)) continue;
+    if (m[1] !== undefined) {
+      if (!amountGrounded(n)) return false;
+    } else if (m[2] !== undefined || m[3] !== undefined) {
+      if (!percentGrounded(n)) return false;
+    } else if (!countGrounded(n)) {
+      return false;
+    }
   }
   return true;
 }

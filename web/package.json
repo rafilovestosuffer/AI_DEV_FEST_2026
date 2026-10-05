@@ -7,7 +7,7 @@
     "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/ && cp -r ml-artifacts .next/standalone/",
     "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
     "lint": "eslint .",
-    "test": "bun test tests/sathi-engines.test.ts tests/sathi-ml.test.ts tests/sathi-app.test.ts tests/sathi-openrouter.test.ts",
+    "test": "bun test tests/sathi-engines.test.ts tests/sathi-ml.test.ts tests/sathi-app.test.ts tests/sathi-openrouter.test.ts tests/sathi-actions.test.ts",
     "postinstall": "prisma generate",
     "db:push": "prisma db push --accept-data-loss",
     "db:generate": "prisma generate",

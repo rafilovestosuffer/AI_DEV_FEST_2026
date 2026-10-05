@@ -7,12 +7,23 @@
  *
  *   path'(day d) = path(day d) + freed_daily * d + one_time
  *
- * p_after = P(min path' < floor) over the same shortfall window.
+ *   p_raw_after = P(min path' < floor) over the same shortfall window
+ *   p_after     = recalibrate(p_raw_after, shortfall_platt)
+ *
+ * The counterfactual probability is passed through the SAME Platt
+ * recalibration the baseline forecast used (forecaster.ts recalibrate() with
+ * calibration.shortfall_platt from the shipped artifacts). Both scales must
+ * match: the baseline pShortfall is recalibrated, so a raw simulation
+ * probability for the counterfactual would mix scales and can even flip the
+ * sign of the risk delta. In the bootstrap fallback (model unavailable) the
+ * baseline is raw, so the counterfactual stays raw too — scales always agree.
+ *
  * Deterministic code owns every number; the LLM never touches this.
  */
 import type { User } from "@prisma/client";
 import type { Txn } from "@/lib/engine/domain";
 import { personaUserForecast } from "@/lib/server/userForecast";
+import { recalibrate } from "@/lib/engine/forecaster";
 import { simulateBalancePaths } from "@/lib/engine/simulation";
 import { categorize } from "@/lib/engine/categorizer";
 import { cashoutFee } from "@/lib/engine/cashout";
@@ -39,6 +50,10 @@ interface PersonaRisk {
   floorPaisa: number;
   windowDays: number;
   pShortfall: number;
+  /** Platt coefficients the baseline pShortfall was calibrated with
+   * (null on the raw bootstrap fallback) — the counterfactual MUST reuse
+   * exactly these so before/after live on the same probability scale. */
+  platt: { a: number; b: number } | null;
   safeToSpendPaisa: number;
   daysToIncome: number | null;
   method: string;
@@ -58,6 +73,7 @@ export function personaRisk(user: User, txns: Txn[]): PersonaRisk | null {
       floorPaisa: fc.floorPaisa,
       windowDays: fc.windowDays,
       pShortfall: fc.pShortfall,
+      platt: fc.shortfallPlatt,
       safeToSpendPaisa: fc.safeToSpendPaisa,
       daysToIncome: fc.daysToIncome,
       method: "lightgbm-quantile + recurring streams + calibrated paths",
@@ -96,6 +112,9 @@ export function personaRisk(user: User, txns: Txn[]): PersonaRisk | null {
     floorPaisa: floorTaka * 100,
     windowDays: window,
     pShortfall: mins.filter((m) => m < floorTaka).length / Math.max(mins.length, 1),
+    // raw bootstrap baseline — no Platt map applied, so none for the
+    // counterfactual either (see module header: scales must always agree)
+    platt: null,
     safeToSpendPaisa: Math.max(q(mins, 10) - floorTaka, 0) * 100,
     daysToIncome: cash.daysToNextIncome ?? null,
     method: `seeded stationary block bootstrap (${SIMULATION_CONFIG.block_length_days}-day blocks)`,
@@ -209,11 +228,13 @@ export function personaActions(user: User, txns: Txn[]): {
     oneTime: bufferTaka,
   });
 
-  // Counterfactual over the same paths.
+  // Counterfactual over the same paths — recalibrated with the SAME Platt
+  // coefficients as the baseline so the two probabilities share one scale.
   const actions: PersonaAction[] = candidates.map((c) => {
     const freedDailyPaisa = (c.freedDaily * 100);
     const oneTimePaisa = c.oneTime * 100;
-    const { p, safe } = pShortfallOfAdjusted(base.pathsPaisa, base.windowDays, base.floorPaisa, freedDailyPaisa, oneTimePaisa);
+    const { p: rawP, safe } = pShortfallOfAdjusted(base.pathsPaisa, base.windowDays, base.floorPaisa, freedDailyPaisa, oneTimePaisa);
+    const p = recalibrate(rawP, base.platt ?? undefined);
     return {
       action_id: c.id,
       title_bn: c.titleBn,

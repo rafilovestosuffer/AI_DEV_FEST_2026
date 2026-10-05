@@ -4,14 +4,22 @@ can rebuild everything from the recorded seed.
 
 Timestamps are stored as ISO-8601 UTC strings. Money columns are integer
 paisa. All access goes through api/repositories/ — no SQL elsewhere.
+
+Connections are per request: `get_db` hands every request a FRESH connection
+(a shared connection across handler threads is a race) with a 30s busy
+timeout, closed in a finally block. Startup (init_db / self-check) uses
+short-lived connections of its own.
 """
 from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 
 import pandas as pd
+
+from api.config import get_settings
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -87,7 +95,24 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Wait up to 30s for a writer instead of failing instantly with SQLITE_BUSY
+    # (WAL allows one writer; per-request connections contend only on writes).
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
+
+
+def get_db() -> Iterator[sqlite3.Connection]:
+    """FastAPI dependency: one FRESH connection per request, closed in finally.
+
+    The connection is created and torn down inside the request scope, so no
+    sqlite3 object is ever shared between handler threads.
+    """
+    db_path = path_from_url(get_settings().database_url)
+    conn = connect(db_path)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def init_db(db_path: Path, data_dir: Path) -> dict[str, str]:

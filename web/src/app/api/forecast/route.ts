@@ -73,18 +73,25 @@ export async function POST(req: NextRequest) {
     const { intel, cash, risk, sts, capacity } = computeAll(txns, anchor, user.openingBalance, salary);
     const activeGoal = goals.find((g) => g.status === "active") ?? null;
 
+    // Clamp the cut percentage to 0-100 (same bound as /api/goals/simulate,
+    // the legacy twin of this simulation endpoint) so a hostile or buggy
+    // client cannot inflate freedMonthly without bound.
+    const cutPct = typeof body.cutPct === "number" && Number.isFinite(body.cutPct)
+      ? Math.max(0, Math.min(100, body.cutPct))
+      : undefined;
+
     // determine freed monthly amount for the action
     let freedMonthly = 0;
     if (body.actionId === "buffer_payday") {
       freedMonthly = Math.max(500, Math.round(capacity * 0.2));
     } else if (body.actionId === "batch_cashouts") {
       freedMonthly = Math.round(intel.cashOut.total * 0.04);
-    } else if (body.cutCategory && body.cutPct) {
+    } else if (body.cutCategory && cutPct) {
       const from90 = anchor.getTime() - 90 * 24 * 3600 * 1000;
       const catSpend = txns
         .filter((t) => new Date(t.timestamp).getTime() >= from90 && t.direction === "out" && t.category === body.cutCategory)
         .reduce((s, t) => s + t.amount, 0) / 3;
-      freedMonthly = Math.round(catSpend * (body.cutPct / 100));
+      freedMonthly = Math.round(catSpend * (cutPct / 100));
     } else if (body.extraMonthlySavings) {
       freedMonthly = body.extraMonthlySavings;
     }

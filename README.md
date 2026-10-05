@@ -69,7 +69,7 @@ Sathi's answer: **Empower the customer with foresight, clear trade-offs, and hon
 
 | Capability | How AI & Engineering Are Applied | Why a Simple Rule Is Insufficient |
 | :--- | :--- | :--- |
-| **Shortfall Forecasting** | LightGBM quantile regression (9 quantiles) on leakage-safe features + recurring-stream detection + calibrated path sampling | Fixed rules fail under lumpy income dates and volatile expenses. Honest benchmark position (frozen test, docs/eval_report.md T2): the model clearly beats the rule (Brier 0.024 vs 0.053, BSS +0.546) and the forecast band it needs, but only **ties the previous block-bootstrap** on the main test set (Brier 0.0240 vs 0.0236; bootstrap leads PR-AUC 0.410 vs 0.387 and recall at 60% precision). The model's edge is robustness: on the drifted cohort it wins (Brier 0.038 vs 0.041, PR-AUC 0.532 vs 0.410) and it degrades more slowly under feature noise. |
+| **Shortfall Forecasting** | LightGBM quantile regression (9 quantiles) on leakage-safe features + recurring-stream detection + calibrated path sampling | Fixed rules fail under lumpy income dates and volatile expenses. Honest benchmark position (frozen test, docs/eval_report.md T2): the model clearly beats the rule (Brier 0.024 vs 0.053, BSS +0.546) and the forecast band it needs, but only **ties the previous block-bootstrap** on the main test set (Brier 0.0240 vs 0.0236; bootstrap leads PR-AUC 0.410 vs 0.387 and recall at 60% precision). The model's edge is robustness: on the drifted cohort it wins (Brier 0.038 vs 0.041, PR-AUC 0.532 vs 0.476) and it degrades more slowly under feature noise. |
 | **Safe-to-Spend** | Model-based daily budget from forecast paths (P(shortfall) = α by construction); rule formula kept as baseline | Static buffers ignore the user's actual income timing and upcoming obligations. |
 | **Goal Feasibility** | Monte Carlo simulation over historical inflow/outflow distributions with Wilson 95% CI, **empirically recalibrated** (Platt, fitted on the frozen T6 back-test) | Simple "save 20%" rules ignore irregular timing and overestimate feasibility, leading to abandoned goals. Our own raw simulation was ~3–5× optimistic (stated 10.5% → realised 2.8%); every P(goal met) now ships through the recalibration (ECE 0.099 → 0.020) and never claims certainty. |
 | **Bangla Copilot** | LLM orchestrator for intent routing and natural narration with a strict numeric validator | Translates complex figures into culturally native Bangla while strictly enforcing deterministic math. |
@@ -88,7 +88,7 @@ Sathi's answer: **Empower the customer with foresight, clear trade-offs, and hon
                                                            │
           ONLINE (Request Flow — web/, the deployable app) ▼
  Android APK (Capacitor) ──┐                       web/ml-artifacts/forecast/
- Web App (Next.js 16) ─────┼──► web/src/app/api — 35 routes · 42 handlers
+ Web App (Next.js 16) ─────┼──► web/src/app/api — 35 routes · 45 handlers
         │                  │         │
         │  /api/v1/* — the reference Sathi contract (15 routes: personas,
         │             demo JWT, evidence blocks, fail-closed chat, user
@@ -175,10 +175,10 @@ Sathi is validated across 5 synthetic personas (see `config/personas.yaml`, port
 ├── llm/                         # Sanitizer → validator → orchestrator → templates
 ├── ml/                          # Training & evaluation: train, calibrate,
 │                                #   evaluate (T1–T7), features, inference
-├── config/                      # 7 YAML assumption files
+├── config/                      # 8 YAML assumption files
 ├── data_gen/                    # Seeded synthetic generator + demo bundler
 ├── data/                        # Generated parquet panel + ground truth
-├── tests/                       # 80 pytest tests (engines, API, data, forecast)
+├── tests/                       # 98 pytest tests (engines, API, data, forecast)
 ├── context/                     # Architectural specs & working guides
 │   ├── Hackathon Rule Context/  #   Official DIU-CPC × upay hackathon documents
 │   └── context/                 #   architecture, code-standards, ui-context…
@@ -187,12 +187,13 @@ Sathi is validated across 5 synthetic personas (see `config/personas.yaml`, port
 │                                #   HACKATHON_COMPLIANCE.md (§13/§14/§15 matrix)
 ├── scripts/                     # Repo utilities (fixture gen, diagrams, smoke)
 └── web/                         # ★ The deployable Next.js app
-    ├── src/                     #   App Router UI (7 views, EN/বাংলা) + 26 API
-    │                            #     routes incl. /api/v1/* (13 reference routes)
+    ├── src/                     #   App Router UI (7 views, EN/বাংলা) + 35 API
+    │                            #     routes incl. /api/v1/* (15 reference routes)
     ├── prisma/                  #   Schema (User, Transaction, Goal, Insight,
     │                            #     KnowledgeDoc, AuditEvent, ForecastRecord)
     ├── ml-artifacts/            #   Promoted model (9 boosters + calibration)
-    ├── tests/                   #   83 TypeScript tests (parity, leakage, CRUD)
+    ├── tests/                   #   102 TypeScript tests (parity, leakage, CRUD,
+    │                            #     counterfactual actions)
     ├── scripts/                 #   App-side dev utilities
     ├── public/demo/             #   Offline persona bundles (5 personas)
     ├── android/                 #   Capacitor shell (com.upay.sathi)
@@ -263,7 +264,7 @@ bun run db:push      # create the SQLite schema (fresh DB auto-seeds on first lo
 | :--- | :--- | :--- |
 | **Web Dev Server** | `make web-dev` (or `cd web && bun run dev`) | Start the Next.js app on :3000 |
 | **Web Production Build** | `make web-build` | Standalone build in `web/.next/standalone` (ships `ml-artifacts/`) |
-| **Web Tests / Lint** | `make web-test` / `make web-lint` | 95 TS tests / ESLint + type-check |
+| **Web Tests / Lint** | `make web-test` / `make web-lint` | 102 TS tests / ESLint + type-check |
 | **Backend Dev Server** | `make run` | Reference FastAPI v1 service on :8000 |
 | **Dataset Generation** | `make data` | Seeded synthetic panel (2,000 users + 500 drifted) |
 | **Train / Evaluate** | `make train` / `make eval` | 9-quantile boosters / T1–T7 metrics (offline only) |
@@ -278,14 +279,14 @@ bun run db:push      # create the SQLite schema (fresh DB auto-seeds on first lo
 
 ```bash
 # Backend test suite (root)
-pytest                        # → 80 passed
+pytest                        # → 98 passed
 
 # Backend lint & static analysis
 ruff check . && mypy core api llm
 
 # Web app tests, lint, type-check, build (web/)
 cd web
-bun test                      # → 95 passed (engines, ML parity, CRUD, slot protocol, number words, OpenRouter fallback)
+bun test                      # → 102 passed (engines, ML parity, CRUD, slot protocol, number words, OpenRouter fallback, counterfactual actions)
 bun run lint
 bunx tsc --noEmit
 ```
@@ -315,7 +316,7 @@ curl -H "Authorization: Bearer $TOKEN" localhost:3000/api/v1/me/benchmark  # T1�
 
 **Counterfactual actions (P1):** `GET /v1/me/actions` ranks 2–3 candidate actions (trim the top trimmable category 20%, batch cash-outs — fee savings computed from the actual tariff, hold a one-week payday buffer) by rerunning the SAME simulated liquidity paths with each action's deterministic cash-flow delta and reporting the new P(shortfall). Suggestions only — the system never moves money. The forecast's `top_action` field carries the winner.
 
-**Validation highlights** (generated, never hand-typed — `docs/eval_report.md`): forecaster Brier **0.024** vs rule **0.053** (BSS vs rule **+0.546**) — and, stated plainly: on the main frozen test the model **ties the previous block-bootstrap** (Brier 0.0240 vs 0.0236; bootstrap leads PR-AUC 0.410 vs 0.387 and recall at 60% precision 0.375 vs 0.236), while winning on the drifted cohort (Brier 0.038 vs 0.041, PR-AUC 0.532) and degrading more slowly under ±10–30% feature noise. Pinball improvement **+4.9%** over the best baseline, daily p10–p90 coverage **84.7%** (nominal 80%). **Rare-class caveat:** shortfall events occur in only **3.1%** of test user-weeks — Brier/PR-AUC values are small by construction, per-persona positives are sparse (shopkeeper 0.0%), and alert cutoffs are chosen on validation user-weeks; alert-level recall/precision carry wide error bars at this base rate. **Operating point (validation-chosen, applied untouched to the frozen test):** maximizing recall subject to precision ≥ 0.60 on validation gives model recall **0.236** @ precision 0.57 and bootstrap recall **0.278** @ precision 0.67 — the aspirational recall ≥ 0.80 @ precision ≥ 0.60 bar is **not attainable for any method at this class balance**, which is reported as-is rather than tuned away. Reliability: **ECE 0.012** (model) / 0.014 (bootstrap). On the **drifted cohort** the model leads everything: Brier **0.038** vs bootstrap 0.041 vs rule 0.066 (BSS vs rule **+0.415**), PR-AUC 0.532, and recall at 60% precision **0.461 vs 0.335** (bootstrap). Goal planner: raw simulation was **3–5× optimistic** (stated 10.5% → realised 2.8%; 27.6% → 5.1%); the shipped **Platt recalibration** brings ECE from **0.099 → 0.020** (T6). In-product classifier (frozen test users): ML Brier **0.056** vs simple-rule **0.066** (BSS **+15%**), PR-AUC **0.978** vs **0.879**. NL parser: **100%** amount / **100%** category on the labelled holdout. The TypeScript LightGBM predictor matches the Python booster **exactly** (9 models × 24 fixture rows, diff 0 — `web/tests/fixtures/lgb-predictions.json`).
+**Validation highlights** (generated, never hand-typed — `docs/eval_report.md`): forecaster Brier **0.024** vs rule **0.053** (BSS vs rule **+0.546**) — and, stated plainly: on the main frozen test the model **ties the previous block-bootstrap** (Brier 0.0240 vs 0.0236; bootstrap leads PR-AUC 0.410 vs 0.387 and recall at 60% precision 0.375 vs 0.236), while winning on the drifted cohort (Brier 0.038 vs 0.041, PR-AUC 0.532) and degrading more slowly under ±10–30% feature noise. Pinball improvement **+4.9%** over the best baseline, daily p10–p90 coverage **84.7%** (nominal 80%). **Rare-class caveat:** shortfall events occur in only **3.1%** of test user-weeks — Brier/PR-AUC values are small by construction, per-persona positives are sparse (shopkeeper 0.0%), and alert cutoffs are chosen on validation user-weeks; alert-level recall/precision carry wide error bars at this base rate. **Operating point (validation-chosen, applied untouched to the frozen test):** maximizing recall subject to precision ≥ 0.60 on validation gives model recall **0.236** @ precision 0.57 and bootstrap recall **0.278** @ precision 0.67 — the aspirational recall ≥ 0.80 @ precision ≥ 0.60 bar is **not attainable for any method at this class balance**, which is reported as-is rather than tuned away. Reliability: **ECE 0.012** (model) / 0.014 (bootstrap). On the **drifted cohort** the model leads everything: Brier **0.038** vs bootstrap 0.041 vs rule 0.066 (BSS vs rule **+0.415**), PR-AUC 0.532, and recall at 60% precision **0.460 vs 0.335** (bootstrap). Goal planner: raw simulation was **3–5× optimistic** (stated 10.5% → realised 2.8%; 27.6% → 5.1%); the shipped **Platt recalibration** brings ECE from **0.099 → 0.020** (T6). In-product classifier (frozen test users): ML Brier **0.056** vs simple-rule **0.066** (BSS **+15%**), PR-AUC **0.978** vs **0.879**. NL parser: **100%** amount / **100%** category on the labelled holdout. The TypeScript LightGBM predictor matches the Python booster **exactly** (9 models × 24 fixture rows, diff 0 — `web/tests/fixtures/lgb-predictions.json`).
 
 ---
 
@@ -326,7 +327,7 @@ curl -H "Authorization: Bearer $TOKEN" localhost:3000/api/v1/me/benchmark  # T1�
   - **Updating:** since v6.2.0 the APK is signed with a stable release key, so future versions install directly over the old one — no uninstall, no data loss. (Moving from a pre-v6.2.0 debug build to the release key requires **one final uninstall**.)
   - **Note for Bangladeshi networks:** some providers intermittently block `*.vercel.app`. The app is immune in demo mode and auto-reconnects; for a fully unblocked experience, map a custom domain to the Vercel project (Settings → Domains).
 - **Compliance matrix:** [`docs/HACKATHON_COMPLIANCE.md`](docs/HACKATHON_COMPLIANCE.md) — §13 Product Readiness, §14 Responsible AI & Safety, §15 Evaluation, with an evidence pointer for every line
-- **Build window (T+0 disclosure):** all product code in this repository was authored **2026-10-02 → 2026-10-04**, inside the hackathon's initial development window (T+0 → T+72h per the official guideline; the final hours were a requirements-audit fix pass: user liquidity inputs, counterfactual actions, slot-based LLM narration, and the on-device offline core). The pushed history contains 18 commits, all dated 2–4 Oct 2026; earlier local iteration was consolidated into `4ae2dde` ("feat(v6.0): refactor monorepo…") during a repository restructure — the consolidated tree is the same work, and no substantially completed solution prepared before T+0 was reused (rule 4.3). Only general-purpose open-source libraries and the documented third-party services in [`docs/third_party.md`](docs/third_party.md) are pre-existing components (rule 4.3 permits these).
+- **Build window (T+0 disclosure):** all product code in this repository was authored **2026-10-02 → 2026-10-04**, inside the hackathon's initial development window (T+0 → T+72h per the official guideline; the final hours were a requirements-audit fix pass: user liquidity inputs, counterfactual actions, slot-based LLM narration, and the on-device offline core). The pushed history contains 74 commits in total — 50 of them the granular product-development sequence from the initial working-product upload `66f0be4` onward — all dated 2–4 Oct 2026; earlier local iteration was consolidated into `4ae2dde` ("feat(v6.0): refactor monorepo…") during a repository restructure — the consolidated tree is the same work, and no substantially completed solution prepared before T+0 was reused (rule 4.3). Only general-purpose open-source libraries and the documented third-party services in [`docs/third_party.md`](docs/third_party.md) are pre-existing components (rule 4.3 permits these).
 - **Responsible AI:** synthetic data only (no real PII; every ML number labelled SIMULATED); LLM guardrails (numeric grounding, deterministic fallback, no autonomous decisions); model guardrails (leakage-safe features enforced by test, held-out calibration, fail-closed serving); `audit_events` records every capture, forecast and query
 - **Submission Milestone:** demo video + technical report at T+66h
 

@@ -139,6 +139,10 @@ export interface UserForecast {
   windowDays: number;
   /** P(balance < floor within windowDays), Platt-recalibrated. */
   pShortfall: number;
+  /** Platt coefficients recalibrate() applied to pShortfall (null when the
+   *  artifacts ship none) — counterfactuals over these paths MUST reuse them
+   *  so before/after probabilities share one scale. */
+  shortfallPlatt: { a: number; b: number } | null;
   /** Median argmin day (1 = tomorrow); null when the window is empty. */
   troughDay: number | null;
   /** Q_0.10(min balance over window) - floor. */
@@ -256,6 +260,7 @@ export function forecastPanel(
     floorPaisa: floor,
     windowDays: window,
     pShortfall: p,
+    shortfallPlatt: fc.calibration.shortfall_platt ?? null,
     troughDay: window >= 1 ? trough : null,
     safeToSpendPaisa: safeToSpendFromPaths(
       paths.map((p) => p.slice(0, window + 1)),

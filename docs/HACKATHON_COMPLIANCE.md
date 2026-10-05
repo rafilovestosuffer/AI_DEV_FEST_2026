@@ -2,7 +2,7 @@
 
 > **Purpose.** This document maps every line of the hackathon's **§13 Product Readiness**, **§14 Responsible AI & Safety**, and **§15 Evaluation Framework** to concrete, checkable evidence inside this repository — written to be read by a judge or a senior reviewer, and re-verified by the commands in §6.
 >
-> **Status:** v6.0 (template layout: Python factory at repo root, Next.js app in `web/`) · model `fc-2026-09-30-15d8427d` · 83 TypeScript + 78 Python tests green (both enforced in CI) · all 31 smoke checks passing · owner-scoped product API with full CRUD + reset.
+> **Status:** v6.0 (template layout: Python factory at repo root, Next.js app in `web/`) · model `fc-2026-09-30-15d8427d` · 102 TypeScript + 98 Python tests green (both enforced in CI) · all 31 smoke checks passing · owner-scoped product API with full CRUD + reset.
 
 ---
 
@@ -11,7 +11,7 @@
 | # | Requirement | Status | Evidence (where to look) |
 |---|---|---|---|
 | 1 | **User problem is frequent or economically meaningful** | ✅ Covered | Month-end shortfall from income/expense **timing mismatch** is the daily reality of irregular-income MFS users (garment workers, gig riders, remittance households). Habitual agent cash-outs leak 1.5% (min ৳5) per withdrawal. See `README.md` §1, the five personas in `web/src/lib/engine/sathiPersonas.ts` (ported from `config/personas.yaml`), and `docs/diagrams/architecture.png`. |
-| 2 | **AI adds value beyond a simple deterministic rule** | ✅ Covered | Model Brier **0.024** vs rule baseline **0.053** (skill +54.6%); early-warning **recall 50% vs rule 29%** at the validated 0.15 cutoff. Ablation (T5): removing recurring-stream timing degrades Brier 0.024 → 0.0263 — the model weighs timing, obligations and volatility together in a way rules cannot. `docs/metrics/benchmark.json`, `docs/metrics/eval.json` §T2/T5, served live at `/api/v1/me/benchmark`. |
+| 2 | **AI adds value beyond a simple deterministic rule** | ✅ Covered | Model Brier **0.024** vs rule baseline **0.053** (skill +54.6%). Early-warning alerting, stated honestly per method at its validation-chosen cutoff: the model recalls **50%** of shortfall weeks (precision 0.32 at cutoff 0.15); the previous block-bootstrap baseline recalls **29%** (precision 0.64 at cutoff 0.25); the simple rule's recall is actually **66.7%** — but it buys that by over-alerting, at a Brier **2.2× worse** than the model's (0.053 vs 0.024) and PR-AUC 0.228 vs 0.387. Ablation (T5): removing recurring-stream timing degrades Brier 0.024 → 0.0263 — the model weighs timing, obligations and volatility together in a way rules cannot. `docs/metrics/benchmark.json`, `docs/metrics/eval.json` §T2/T5, served live at `/api/v1/me/benchmark`. |
 | 3 | **There is a clear action after the prediction or recommendation** | ✅ Covered | Every risk surface ends in decisions: **3 action cards with simulated impact** on `/api/forecast` (POST) and the CashFlow view; **3 honest goal options** (Monte Carlo + Wilson 95% CI) on `/api/v1/me/goal-plan`; **cash-out fee audit** naming repeat agents, replaceable withdrawals and avoidable ৳ at the labelled rate. Actions are options with trade-offs — never auto-executed. |
 | 4 | **The business benefit can be measured** | ✅ Covered | (a) Avoidable fees per user — deterministic, auditable (cashout engine); (b) early-warning recall/precision at a fixed cutoff — reported in `eval.json` §T2; (c) plan realism — goal-planner back-test: raw ECE **0.099** → **0.020 after the shipped Platt recalibration** over 175 users × 875 goals (§T6); (d) every served prediction is persisted (`ForecastRecord`) so a pilot can score realized outcomes against predicted probabilities. |
 | 5 | **The model can be validated with future real-world data** | ✅ Covered | `ForecastRecord` stores probability, pressure, factors and `model_version` per prediction — the scoring dataset for future outcomes. The full re-training + re-evaluation pipeline is reproducible (`make data && make train && make eval` from the repo root); evaluation splits are **by user**, never by row. Schema: `web/prisma/schema.prisma`; pipeline: root `Makefile`. |
@@ -23,7 +23,7 @@
 | Stage | Outcome | Sathi's position |
 |---|---|---|
 | 1. Competition | Prototype + pitch + evidence | **This repository** — working app, generated metrics, model card, compliance matrix. |
-| 2. Technical review | Model quality, architecture, security, feasibility | **Ready** — model card (`docs/model-card.md`), T1–T7 eval (`docs/eval_report.md`), 83 + 78 tests, bit-identical serving proof (`web/tests/fixtures/lgb-predictions.json`), layered architecture diagrams (`docs/diagrams/`). |
+| 2. Technical review | Model quality, architecture, security, feasibility | **Ready** — model card (`docs/model-card.md`), T1–T7 eval (`docs/eval_report.md`), 102 + 98 tests, bit-identical serving proof (`web/tests/fixtures/lgb-predictions.json`), layered architecture diagrams (`docs/diagrams/`). |
 | 3. Business review | Customer value, strategic relevance, economics | **Ready** — Track 03 framing (customer innovation & financial independence); measurable levers: fee leakage, shortfall avoidance, savings follow-through. |
 | 4. Controlled validation | Access to suitable governed data | **Designed for it** — synthetic-only now; retraining/evaluation is one command on governed data; predictions already persisted for outcome scoring. |
 | 5. POC | Test with real operational context | **Deployable** — fail-closed serving (rule/bootstrap fallback), reference-compatible API, container/CI assets. |
@@ -52,8 +52,8 @@
 |---|---|---|---|
 | **Problem relevance** | 20% | Solves a real and meaningful customer/business problem | Month-end shortfall + fee leakage for irregular-income MFS users — frequent (monthly cycle), economically meaningful (fees + forced borrowing), and underserved (raw transaction lists). Track 03: customer innovation & financial independence. |
 | **AI/ML depth** | 20% | AI is material to the solution and technically credible | LightGBM 9-quantile direct multi-horizon forecaster; split-conformal widening + within-week correlation ρ=0.4 + Platt recalibration fitted on held-out users only; 30 leakage-safe scale-free features (one global model, all income levels); **bit-identical TypeScript serving** verified against the pinned Python lightgbm (4.6.0) on a 24-row × 9-model fixture; full T1–T7 suite. |
-| **Business/customer impact** | 20% | Clear, measurable value and plausible economics | A daily safe-to-spend number; 7-day early warning with recall 50% vs rule 29%; named avoidable fees per user; goal plans with empirically recalibrated confidence (back-test ECE 0.099 → 0.020 after Platt calibration). All four are measurable in a pilot via `ForecastRecord` + audit trail. |
-| **Prototype quality** | 15% | Working end-to-end experience, not only slides | Production Next.js 16 build; 32 endpoints; 83 TS + 78 Python tests (both run in GitHub Actions CI); bilingual UI (7 views) with evidence everywhere; Android APK CI; demo personas login. Verify: §6 commands below. |
+| **Business/customer impact** | 20% | Clear, measurable value and plausible economics | A daily safe-to-spend number; 7-day early warning (model recall 50% at precision 0.32; the bootstrap baseline trades to 29% recall at 0.64 precision, and the rule's 66.7% recall comes from over-alerting at 2.2× worse Brier); named avoidable fees per user; goal plans with empirically recalibrated confidence (back-test ECE 0.099 → 0.020 after Platt calibration). All four are measurable in a pilot via `ForecastRecord` + audit trail. |
+| **Prototype quality** | 15% | Working end-to-end experience, not only slides | Production Next.js 16 build; 45 method handlers across 35 routes; 102 TS + 98 Python tests (both run in GitHub Actions CI); bilingual UI (7 views) with evidence everywhere; Android APK CI; demo personas login. Verify: §6 commands below. |
 | **Innovation** | 10% | Distinctive insight or differentiated product idea | Focus on **cash-flow timing**, not budgeting; "who computes what" AI split with a numeric-parity fail-closed LLM; model-based safe-to-spend from simulated liquidity paths (Q₀.₁₀ − personal floor) with the rule baseline always visible. |
 | **Scalability & integration** | 10% | Believable path toward real systems and future data | Reference-compatible v1 API; Prisma (SQLite → Postgres swap is a config change); artifacts pinned by config hash and traced into standalone builds; retraining pipeline reproducible on governed data; drift + noise robustness rows already measured. |
 | **Responsible AI & security** | 5% | Privacy, explainability, fairness, safety considered | The entire §2 table above — implemented and testable, not just stated. |
@@ -85,8 +85,8 @@
 ## 6. Verification log — re-run everything
 
 > Both suites are enforced on every push / PR by GitHub Actions:
-> `backend-ci.yml` runs the 78 pytest tests plus seeded-data determinism + demo-bundle
-> verification from the repo root; `app-ci.yml` runs the web job (83 TS tests → lint →
+> `backend-ci.yml` runs the 98 pytest tests plus seeded-data determinism + demo-bundle
+> verification from the repo root; `app-ci.yml` runs the web job (102 TS tests → lint →
 > type-check → build) inside `web/`. Green CI on the repo is the standing proof of the claims below.
 
 ```bash
@@ -96,15 +96,15 @@ bun install && bun run db:push && bun run dev      # → http://localhost:3000
 
 # 2. TypeScript quality gates (web/)
 bun run lint          # ESLint — clean
-bun run test          # 83 tests pass (engines, LightGBM parity, leakage, personas, CRUD)
-bun run build         # production build, 32 API routes
+bun run test          # 102 tests pass (engines, LightGBM parity, leakage, personas, CRUD, counterfactual actions)
+bun run build         # production build, 35 API routes
 
 # 3. Python backend factory (repo root)
 cd ..
 pip install -r requirements.txt -r requirements-dev.txt
 export DATABASE_URL=sqlite:///./data/sathi.db
 rm -f data/sathi.db          # force fresh dataset load
-pytest -q                    # → 78 passed
+pytest -q                    # → 98 passed
 
 # 4. Endpoint smoke (server running)
 curl -s localhost:3000/api/boot | head -c 200
@@ -119,4 +119,4 @@ curl -s -H "Authorization: Bearer $TOKEN" localhost:3000/api/v1/me/benchmark | h
 python scripts/diagrams/render_diagrams.py    # → docs/diagrams/*.png
 ```
 
-**Latest run (v6.0, template-layout release):** tsc clean · ESLint clean · 83/83 TS tests (from `web/`) · 78/78 Python tests (from repo root) · production build compiled (32 routes) · cold-start E2E on a fresh SQLite (schema self-created, persona seeded, forecast served with `method = lightgbm-quantile + recurring streams + calibrated paths` from `web/ml-artifacts/`) · all 4 architecture diagrams regenerated deterministically.
+**Latest run (v6.0, template-layout release):** tsc clean · ESLint clean · 102/102 TS tests (from `web/`) · 98/98 Python tests (from repo root) · production build compiled (35 routes) · cold-start E2E on a fresh SQLite (schema self-created, persona seeded, forecast served with `method = lightgbm-quantile + recurring streams + calibrated paths` from `web/ml-artifacts/`) · all 4 architecture diagrams regenerated deterministically.

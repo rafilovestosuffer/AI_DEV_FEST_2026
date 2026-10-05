@@ -107,12 +107,18 @@ const llmSpend = new Map<string, number>();
  * Ensure a Sathi persona user exists with seeded synthetic history
  * (idempotent, deterministic per persona). The main UI's demo user is
  * untouched; persona users power the /api/v1 surface.
+ *
+ * Resolution is role-scoped: a user row only counts as the persona when its
+ * role is "persona". If the device OWNER happens to be named "Rina Begum"
+ * (the garment_worker persona's name), that owner row must NEVER be
+ * returned here — the owner's personal ledger stays out of the demo-persona
+ * API and a fresh persona user is seeded instead.
  */
 export async function ensurePersonaUser(personaId: string): Promise<User> {
   await ensureSchema(); // cold-start safe: creates tables on a fresh database
   const spec = SATHI_PERSONAS[personaId];
   if (!spec) throw new NotFoundError(`Unknown persona: ${personaId}`);
-  const existing = await db.user.findFirst({ where: { name: spec.name } });
+  const existing = await db.user.findFirst({ where: { name: spec.name, role: "persona" } });
   if (existing) {
     const kbCount = await db.knowledgeDoc.count();
     if (kbCount === 0) await seedKnowledgeDocs();
@@ -293,8 +299,13 @@ export async function personaTxns(userId: number): Promise<{ txns: Txn[]; user: 
   };
 }
 
-/** Resolve the persona for a persona-seeded user by name. */
+/** Resolve the persona for a persona-seeded user by name — role-scoped:
+ * only demo-persona sessions resolve; an owner named like a persona (e.g.
+ * "Rina Begum") reports "custom", never the persona. */
 export function personaOfUser(user: User): { id: string; labelBn: string; labelEn: string } {
+  if (user.role !== "persona") {
+    return { id: "custom", labelBn: "কাস্টম", labelEn: "Custom" };
+  }
   for (const p of Object.values(SATHI_PERSONAS)) {
     if (p.name === user.name) return { id: p.id, labelBn: p.labelBn, labelEn: p.labelEn };
   }

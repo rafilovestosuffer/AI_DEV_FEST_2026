@@ -26,8 +26,8 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Run full engine + app test suite (84 tests)
-        run: bun test tests/sathi-engines.test.ts tests/sathi-ml.test.ts tests/sathi-app.test.ts tests/sathi-openrouter.test.ts
+      - name: Run full engine + app test suite (102 tests)
+        run: bun test tests/sathi-engines.test.ts tests/sathi-ml.test.ts tests/sathi-app.test.ts tests/sathi-openrouter.test.ts tests/sathi-actions.test.ts
 
       - name: Lint
         run: bun run lint

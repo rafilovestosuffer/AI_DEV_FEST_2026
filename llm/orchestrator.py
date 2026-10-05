@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
 from api.config import Settings
+from api.repositories import spend
 from core.formatting import format_probability, format_taka, to_bangla_digits, to_english_digits
+from core.timeutils import DHAKA
 from llm.render import render
 from llm.sanitizer import sanitize_input
 from llm.validator import extract_number_words, validate_numbers
@@ -110,13 +113,27 @@ def detect_intent(text: str) -> str:
     return "general"
 
 
+def _today_dhaka() -> dt.date:
+    """Server "today" in Asia/Dhaka — the llm_spend day boundary (ADR-10:
+    calendar logic runs in Dhaka local time)."""
+    return dt.datetime.now(DHAKA).date()
+
+
 def handle_message(
     user_message: str,
     context_data: dict[str, Any],
     settings: Settings,
     locale: str = "bn",
+    spend_conn: sqlite3.Connection | None = None,
 ) -> OrchestratorResponse:
-    """Process a user message safely with sanitization, routing, validation, and fail-closed templates."""
+    """Process a user message safely with sanitization, routing, validation, and fail-closed templates.
+
+    `spend_conn` wires the llm_spend daily cap (architecture §4.2): when
+    today's provider calls (Asia/Dhaka date) already reached
+    settings.llm_daily_cap, the provider is never called and the reviewed
+    deterministic template is the answer (fail closed). Every real provider
+    attempt is counted, so subsequent requests see the updated total.
+    """
     cleaned_text, is_safe = sanitize_input(user_message)
     if not is_safe:
         reply = render("general_refusal", locale=locale)
@@ -161,10 +178,33 @@ def handle_message(
             fallback_used=True,
         )
 
-    # 2. OpenRouter LLM generation via the SLOT PROTOCOL: the model writes
+    # 2. Daily spend cap — FAIL CLOSED (architecture §4.2): count today's
+    #    provider calls (Asia/Dhaka date) and, at the cap, never call the
+    #    provider; the reviewed deterministic template is the answer.
+    if spend_conn is not None:
+        spend_day = _today_dhaka().isoformat()
+        if spend.get_calls(spend_conn, spend_day) >= max(settings.llm_daily_cap, 0):
+            template_name, template_vars = _resolve_template_vars(intent, context_data, locale)
+            reply = render(template_name, locale=locale, **template_vars)
+            return OrchestratorResponse(
+                reply=reply,
+                intent=intent,
+                evidence_labels={"narrative": "Data"},
+                allowed_numbers=sorted(list(allowed_numbers)),
+                generated_text=False,
+                validator_passed=True,
+                fallback_used=True,
+            )
+    else:
+        spend_day = None
+
+    # 3. OpenRouter LLM generation via the SLOT PROTOCOL: the model writes
     #    {{fK}} placeholders; the app substitutes trusted values. Any free
     #    digit or number word in the draft fails closed to the template.
-    draft_reply, draft_is_generated = _generate_draft(cleaned_text, intent, context_data, locale, settings, facts)
+    draft_reply, draft_is_generated = _generate_draft(
+        cleaned_text, intent, context_data, locale, settings, facts,
+        spend_conn=spend_conn, spend_day=spend_day,
+    )
 
     if draft_is_generated and draft_reply:
         rendered = render_slots(draft_reply, facts)
@@ -195,7 +235,7 @@ def handle_message(
             fallback_used=True,
         )
 
-    # 3. Template path (LLM unavailable / disabled)
+    # 4. Template path (LLM unavailable / disabled / at the daily cap)
     template_name, template_vars = _resolve_template_vars(intent, context_data, locale)
     reply = render(template_name, locale=locale, **template_vars)
     return OrchestratorResponse(
@@ -352,10 +392,22 @@ def _generate_draft(
     locale: str,
     settings: Settings,
     facts: list[tuple[str, str]] | None = None,
+    spend_conn: sqlite3.Connection | None = None,
+    spend_day: str | None = None,
 ) -> tuple[str, bool]:
-    """Generate draft via OpenRouter if active, otherwise fall back to template."""
-    if settings.llm_enabled and settings.llm_provider in ("openai-compatible", "openrouter"):
+    """Generate draft via OpenRouter if active, otherwise fall back to template.
+
+    Every real provider attempt (key present, provider configured) is counted
+    in llm_spend for the given day; the cap itself is enforced by
+    handle_message BEFORE any provider call. An attempt that returns None is
+    still an attempt — it may have reached the provider.
+    """
+    if (settings.llm_enabled
+            and settings.llm_provider in ("openai-compatible", "openrouter")
+            and settings.llm_api_key):
         llm_reply = _call_openrouter(user_text, intent, ctx, locale, settings, facts)
+        if spend_conn is not None and spend_day is not None:
+            spend.increment(spend_conn, spend_day)
         if llm_reply:
             return llm_reply, True
 

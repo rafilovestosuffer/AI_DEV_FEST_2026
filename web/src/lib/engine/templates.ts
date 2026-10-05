@@ -33,7 +33,7 @@ const TEMPLATES: Record<Locale, Record<TemplateName, string>> = {
     forecast_risk:
       "সামনের {horizon} দিনে টানাটানির সম্ভাবনা প্রায় {shortfall_prob}। বিশেষ করে {trough_date} নাগাদ সতর্ক থাকা ভালো।",
     forecast_safe:
-      "সামনের {horizon} দিনে কোনো টানাটানির সম্ভাবনা কম। সম্ভাব্য সর্বনিম্ন ব্যালেন্স {trough_date} নাগাদ প্রায় {min_balance} হতে পারে।",
+      "সামনের {horizon} দিনে কোনো টানাটানির সম্ভাবনা কম। এই সময়ের সর্বনিম্ন ব্যালেন্স প্রায় {min_balance} হতে পারে, সম্ভাব্য সময় {trough_date} নাগাদ।",
     cashout_audit:
       "আপনি এজেন্ট থেকে ক্যাশ-আউট না করে ডিজিটাল পেমেন্ট করলে আনুমানিক {savings} ফি বাঁচাতে পারতেন।",
     goal_plan:
@@ -57,7 +57,7 @@ const TEMPLATES: Record<Locale, Record<TemplateName, string>> = {
     forecast_risk:
       "There is an estimated {shortfall_prob} probability of liquidity pressure in the next {horizon} days, especially around {trough_date}.",
     forecast_safe:
-      "Cash flow is projected to remain stable over the next {horizon} days. Estimated lowest balance around {trough_date} is approximately {min_balance}.",
+      "Cash flow is projected to remain stable over the next {horizon} days. The lowest point in the forecast window is approximately {min_balance}, expected around {trough_date}.",
     cashout_audit:
       "You could have saved approximately {savings} in cash-out fees by paying merchants digitally instead of withdrawing from agents.",
     goal_plan:

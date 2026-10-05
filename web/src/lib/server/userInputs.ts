@@ -113,15 +113,15 @@ export async function upsertUserInputs(userId: number, patch: UserInputsPatch): 
 /**
  * Behavioral pocket-cash estimate (same formula the v1 summary used:
  * ~30% of the trailing 21-day cash-out total is assumed still unspent),
- * plus the observed daily burn.
+ * plus the observed trailing total and daily burn.
  */
-export function behavioralCash(txns: Txn[], anchor: Date): { estimateTaka: number; burnTakaPerDay: number } {
+export function behavioralCash(txns: Txn[], anchor: Date): { estimateTaka: number; burnTakaPerDay: number; trailingTotalTaka: number } {
   const recent = txns.filter(
     (t) => t.direction === "out" && t.category === "cash_out" &&
       new Date(t.timestamp).getTime() > anchor.getTime() - 21 * DAY_MS,
   );
   const total = recent.reduce((s, t) => s + t.amount, 0);
-  return { estimateTaka: Math.round(total * 0.3), burnTakaPerDay: total / 21 };
+  return { estimateTaka: Math.round(total * 0.3), burnTakaPerDay: total / 21, trailingTotalTaka: total };
 }
 
 /**

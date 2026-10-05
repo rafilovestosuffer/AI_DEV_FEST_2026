@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import sqlite3
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -20,8 +21,9 @@ from fastapi.responses import JSONResponse
 import sathi_config
 from api.auth import create_access_token, get_current_user_id
 from api.config import get_settings
-from api.db import connect, init_db, path_from_url
+from api.db import connect, get_db, init_db, path_from_url
 from api.errors import NotFoundError, SathiError, ValidationFailedError
+from api.ratelimit import rate_limit
 from api.repositories import goals as goals_repo
 from api.repositories import transactions as tx_repo
 from api.repositories import users as users_repo
@@ -52,6 +54,12 @@ from ml.inference import load_latest_version, load_metadata
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data"
 
+# Module-level dependency singleton: `Depends(get_db)` is an immutable
+# marker, so one shared instance is safe (and keeps argument defaults
+# call-free, per ruff B008). Every handler using it receives its OWN
+# fresh per-request connection.
+DB_DEP = Depends(get_db)
+
 _app_state: dict = {}
 
 
@@ -61,18 +69,20 @@ async def lifespan(app: FastAPI):
     cfg = sathi_config.load_config()
     db_path = path_from_url(settings.database_url)
     init_db(db_path, DATA_DIR)
-    conn = connect(db_path)
 
-    # Startup self-check
+    # Startup self-check: prove the DB is reachable with a short-lived
+    # connection. Every request handler now gets its OWN connection via the
+    # get_db dependency — no sqlite3 object is shared across handler threads.
+    conn = connect(db_path)
+    conn.close()
+
     forecast_v = load_latest_version()
     meta = load_metadata()
-    _app_state["conn"] = conn
     _app_state["cfg"] = cfg
     _app_state["forecast_version"] = forecast_v
     _app_state["metadata"] = meta
     _app_state["db_healthy"] = True
     yield
-    conn.close()
 
 
 app = FastAPI(
@@ -153,9 +163,8 @@ def healthz():
 
 # --- Auth & Demo Users ---
 @app.get("/v1/demo-users", response_model=list[DemoUserItem])
-def list_demo_users():
+def list_demo_users(conn: sqlite3.Connection = DB_DEP):
     """List one canonical synthetic demo user per persona."""
-    conn = _app_state["conn"]
     cfg = _app_state["cfg"]
     personas_cfg = cfg.section("personas")
     rows = users_repo.demo_users(conn)
@@ -178,9 +187,12 @@ def list_demo_users():
 
 
 @app.post("/v1/auth/demo-login", response_model=DemoLoginResponse)
-def demo_login(req: DemoLoginRequest):
+def demo_login(
+    req: DemoLoginRequest,
+    _rate_limited: None = Depends(rate_limit("demo_login")),
+    conn: sqlite3.Connection = DB_DEP,
+):
     """Obtain JWT access token for a synthetic demo user."""
-    conn = _app_state["conn"]
     user = users_repo.get_user(conn, req.user_id)
     if user is None:
         raise NotFoundError()
@@ -195,8 +207,10 @@ def demo_login(req: DemoLoginRequest):
 
 # --- Scoped Personal Routes (/v1/me/*) ---
 @app.get("/v1/me/summary", response_model=Envelope[SummaryData])
-def get_user_summary(user_id: str = Depends(get_current_user_id)):
-    conn = _app_state["conn"]
+def get_user_summary(
+    user_id: str = Depends(get_current_user_id),
+    conn: sqlite3.Connection = DB_DEP,
+):
     cfg = _app_state["cfg"]
     forecast_v = _app_state["forecast_version"]
     data, evidence = get_summary(conn, cfg, forecast_v, user_id)
@@ -208,8 +222,8 @@ def get_user_transactions(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     user_id: str = Depends(get_current_user_id),
+    conn: sqlite3.Connection = DB_DEP,
 ):
-    conn = _app_state["conn"]
     cfg = _app_state["cfg"]
     rows, total = tx_repo.list_page(conn, user_id, page, page_size)
     as_of = as_of_date(cfg)
@@ -268,8 +282,10 @@ def get_user_transactions(
 
 
 @app.get("/v1/me/forecast", response_model=Envelope[ForecastData])
-def get_user_forecast(user_id: str = Depends(get_current_user_id)):
-    conn = _app_state["conn"]
+def get_user_forecast(
+    user_id: str = Depends(get_current_user_id),
+    conn: sqlite3.Connection = DB_DEP,
+):
     cfg = _app_state["cfg"]
     data, evidence = get_forecast(conn, cfg, user_id)
     return Envelope(data=data, evidence=evidence)
@@ -277,9 +293,11 @@ def get_user_forecast(user_id: str = Depends(get_current_user_id)):
 
 # --- User Inputs (liquidity corrections: cash on hand, income day, rent) ---
 @app.get("/v1/me/inputs", response_model=Envelope[UserInputsData])
-def get_user_inputs(user_id: str = Depends(get_current_user_id)):
+def get_user_inputs(
+    user_id: str = Depends(get_current_user_id),
+    conn: sqlite3.Connection = DB_DEP,
+):
     """Current user-declared liquidity inputs (defaults when never set)."""
-    conn = _app_state["conn"]
     cfg = _app_state["cfg"]
     data = get_inputs(conn, user_id)
     evidence = build_evidence(
@@ -292,11 +310,14 @@ def get_user_inputs(user_id: str = Depends(get_current_user_id)):
 
 
 @app.post("/v1/me/inputs", response_model=Envelope[UserInputsData])
-def post_user_inputs(req: UserInputsRequest, user_id: str = Depends(get_current_user_id)):
+def post_user_inputs(
+    req: UserInputsRequest,
+    user_id: str = Depends(get_current_user_id),
+    conn: sqlite3.Connection = DB_DEP,
+):
     """Correct the liquidity estimates: cash on hand, income day, rent, other
     liquid funds. A declared cash amount decays forward at the observed daily
     cash burn, so it never overstates liquidity as it ages."""
-    conn = _app_state["conn"]
     cfg = _app_state["cfg"]
     if not any(v is not None for v in (
         req.cash_on_hand_taka, req.income_day, req.rent_amount_taka,
@@ -319,10 +340,12 @@ def post_user_inputs(req: UserInputsRequest, user_id: str = Depends(get_current_
 
 # --- Counterfactual Actions ---
 @app.get("/v1/me/actions")
-def get_user_actions(user_id: str = Depends(get_current_user_id)):
+def get_user_actions(
+    user_id: str = Depends(get_current_user_id),
+    conn: sqlite3.Connection = DB_DEP,
+):
     """Ranked candidate actions with counterfactual shortfall-probability
     deltas, recomputed over the same simulated liquidity paths."""
-    conn = _app_state["conn"]
     cfg = _app_state["cfg"]
     data = get_actions(conn, cfg, user_id)
     evidence = build_evidence(
@@ -336,8 +359,11 @@ def get_user_actions(user_id: str = Depends(get_current_user_id)):
 
 
 @app.post("/v1/me/goal-plan", response_model=Envelope[GoalPlanData])
-def plan_user_goal(req: GoalPlanRequest, user_id: str = Depends(get_current_user_id)):
-    conn = _app_state["conn"]
+def plan_user_goal(
+    req: GoalPlanRequest,
+    user_id: str = Depends(get_current_user_id),
+    conn: sqlite3.Connection = DB_DEP,
+):
     cfg = _app_state["cfg"]
     data, evidence = create_goal_plan(
         conn=conn,
@@ -351,16 +377,21 @@ def plan_user_goal(req: GoalPlanRequest, user_id: str = Depends(get_current_user
 
 
 @app.get("/v1/me/cashout-insights")
-def get_user_cashout(user_id: str = Depends(get_current_user_id)):
-    conn = _app_state["conn"]
+def get_user_cashout(
+    user_id: str = Depends(get_current_user_id),
+    conn: sqlite3.Connection = DB_DEP,
+):
     cfg = _app_state["cfg"]
     data, evidence = get_cashout_insights(conn, cfg, user_id)
     return {"data": data.model_dump(), "evidence": evidence.model_dump()}
 
 
 @app.post("/v1/me/goals", response_model=GoalRecord)
-def save_user_goal(req: GoalCreateRequest, user_id: str = Depends(get_current_user_id)):
-    conn = _app_state["conn"]
+def save_user_goal(
+    req: GoalCreateRequest,
+    user_id: str = Depends(get_current_user_id),
+    conn: sqlite3.Connection = DB_DEP,
+):
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
     goal_id = goals_repo.insert_goal(
         conn=conn,
@@ -388,8 +419,10 @@ def save_user_goal(req: GoalCreateRequest, user_id: str = Depends(get_current_us
 
 
 @app.get("/v1/me/goals", response_model=GoalsData)
-def list_user_goals(user_id: str = Depends(get_current_user_id)):
-    conn = _app_state["conn"]
+def list_user_goals(
+    user_id: str = Depends(get_current_user_id),
+    conn: sqlite3.Connection = DB_DEP,
+):
     rows = goals_repo.list_goals(conn, user_id)
     goals = [
         GoalRecord(
@@ -412,7 +445,10 @@ def list_user_goals(user_id: str = Depends(get_current_user_id)):
 
 # --- Amount Parser ---
 @app.post("/v1/parse-amount", response_model=ParseAmountData)
-def parse_user_amount(req: ParseAmountRequest):
+def parse_user_amount(
+    req: ParseAmountRequest,
+    _rate_limited: None = Depends(rate_limit("parse_amount")),
+):
     """Deterministic amount parser (Bengali/English digits & units)."""
     parsed = parse_amount(req.text)
     display = format_taka(parsed.amount_paisa, "bn") if parsed.amount_paisa is not None else None
@@ -427,9 +463,13 @@ def parse_user_amount(req: ParseAmountRequest):
 
 # --- Copilot / Chat ---
 @app.post("/v1/chat")
-def chat_endpoint(req: ChatRequest, user_id: str = Depends(get_current_user_id)):
+def chat_endpoint(
+    req: ChatRequest,
+    _rate_limited: None = Depends(rate_limit("chat")),
+    user_id: str = Depends(get_current_user_id),
+    conn: sqlite3.Connection = DB_DEP,
+):
     """Conversational endpoint with strict safety, tool grounding, and fail-closed validation."""
-    conn = _app_state["conn"]
     cfg = _app_state["cfg"]
     forecast_v = _app_state["forecast_version"]
 
@@ -454,7 +494,7 @@ def chat_endpoint(req: ChatRequest, user_id: str = Depends(get_current_user_id))
         "estimated_cash_paisa": summary_data.cash_on_hand.estimated_cash_paisa,
     }
 
-    res = handle_message(req.message, context, settings, locale=req.locale)
+    res = handle_message(req.message, context, settings, locale=req.locale, spend_conn=conn)
     evidence = build_evidence(
         cfg,
         n_transactions=tx_repo.count_for_user(conn, user_id),

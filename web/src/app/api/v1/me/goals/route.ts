@@ -60,7 +60,12 @@ export async function POST(req: NextRequest) {
       | { name?: string; goal_type?: string; target_paisa?: number; months?: number; monthly_contribution_paisa?: number }
       | null;
     const targetPaisa = body?.target_paisa;
-    if (!targetPaisa || targetPaisa <= 0) return badRequest("target_paisa must be positive");
+    // Same upper bound as the legacy twin POST /api/goals (targetAmount ≤
+    // ৳100,000,000, expressed here in paisa) — an unbounded target would let
+    // a hostile client fabricate absurd monthly commitments.
+    if (!targetPaisa || !Number.isFinite(targetPaisa) || targetPaisa <= 0 || targetPaisa > 10_000_000_000) {
+      return badRequest("target_paisa must be a positive amount up to 10,000,000,000 (৳100,000,000)");
+    }
 
     const months = Math.max(1, Math.min(36, body?.months ?? 6));
     const monthly = body?.monthly_contribution_paisa

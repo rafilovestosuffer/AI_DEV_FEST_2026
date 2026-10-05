@@ -17,6 +17,9 @@
  * Every probability is therefore passed through the same Platt (logistic)
  * recalibration fitted on the frozen test users as the Python twin:
  *     p_cal = sigmoid(A + B * logit(p_raw))
+ * The shipped constants live in config/app.yaml under `planner:`
+ * (calibration_a / calibration_b — mirrored in sathiConfig.ts
+ * PLANNER_CONFIG; there is no config/planner.yaml).
  * An all-paths success is capped at 1 - 1/(2n) first — the planner must
  * never emit certainty the back-test does not support.
  *
@@ -32,9 +35,9 @@ export interface PlannerConfig {
   minMonthlyContribution: number;
   likelyCutoff: number;
   uncertainCutoff: number;
-  /** Platt recalibration (log-odds). Optional — mirrors the Python config
-   *  defaults so existing constructors keep working. Derived on the frozen
-   *  T6 back-test; see docs/eval_report.md. */
+  /** Platt recalibration (log-odds). Optional — defaults mirror the Python
+   *  config (config/app.yaml, `planner:` block) so existing constructors
+   *  keep working. Derived on the frozen T6 back-test; see docs/eval_report.md. */
   calibrationA?: number;
   calibrationB?: number;
 }
